@@ -3,4 +3,3 @@ npm-debug.log*
 .env
 coverage/
 .DS_Store
-.local/
