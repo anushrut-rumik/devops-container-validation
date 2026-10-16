@@ -1,6 +1,6 @@
 # Docker Container Validation Before Publishing
 
-A DevOps mini project that automatically checks whether a built Docker image actually runs before allowing it to be published.
+A DevOps mini project that automatically checks whether a built Docker image actually runs before allowing it to be published
 
 ## What does this project do?
 
