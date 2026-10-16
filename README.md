@@ -6,7 +6,7 @@ This project demonstrates a small automated workflow for a Node.js application.
 
 1. GitHub installs the application dependencies.
 2. It runs two application tests.
-3. Docker builds an image containing the application.
+3. Docker builds a fresh image containing the application, with build caching disabled and a unique tag for each workflow run and retry.
 4. The workflow briefly starts that image and checks that the application responds.
 5. It removes the temporary container.
 6. If Docker Hub credentials are configured, it publishes the checked image.

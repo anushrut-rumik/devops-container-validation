@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DOCKERHUB_CONFIGURED: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
+      IMAGE_TAG: devops-container-validation:${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
 
     steps:
       - name: Checkout repository
@@ -37,10 +38,18 @@ jobs:
           context: .
           load: true
           push: false
-          tags: devops-container-validation:${{ github.sha }}
+          no-cache: true
+          pull: true
+          tags: ${{ env.IMAGE_TAG }}
 
       - name: Start and verify the built container
-        run: bash scripts/check-container.sh "devops-container-validation:$GITHUB_SHA"
+        run: |
+          image_id=$(docker image inspect "$IMAGE_TAG" --format '{{.Id}}')
+          echo "Testing fresh image: $IMAGE_TAG ($image_id)"
+          bash scripts/check-container.sh "$IMAGE_TAG"
+          echo "### Fresh container image verified" >> "$GITHUB_STEP_SUMMARY"
+          echo "Image tag: $IMAGE_TAG" >> "$GITHUB_STEP_SUMMARY"
+          echo "Image ID: $image_id" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Log in to Docker Hub
         if: env.DOCKERHUB_CONFIGURED == 'true'
@@ -55,8 +64,8 @@ jobs:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
         run: |
           image="$DOCKERHUB_USERNAME/devops-container-validation"
-          docker tag "devops-container-validation:$GITHUB_SHA" "$image:$GITHUB_SHA"
-          docker tag "devops-container-validation:$GITHUB_SHA" "$image:latest"
+          docker tag "$IMAGE_TAG" "$image:$GITHUB_SHA"
+          docker tag "$IMAGE_TAG" "$image:latest"
           docker push "$image:$GITHUB_SHA"
           docker push "$image:latest"
 
