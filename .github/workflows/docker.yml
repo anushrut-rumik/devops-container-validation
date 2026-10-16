@@ -1,4 +1,4 @@
-name: Docker Build and Container Validation
+name: Test, Build, and Deploy
 
 on:
   push:
@@ -6,9 +6,14 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build-test-push:
-    runs-on: ubuntu-latest
+    # Match the Apple Silicon deployment laptop's CPU architecture.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
     env:
       DOCKERHUB_CONFIGURED: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
 
@@ -42,6 +47,26 @@ jobs:
       - name: Start and verify the built container
         run: bash scripts/check-container.sh "devops-container-validation:$GITHUB_SHA"
 
+      - name: Test deployment, update, and failure recovery
+        run: bash scripts/test-deployment.sh "devops-container-validation:$GITHUB_SHA" "$GITHUB_SHA"
+
+      - name: Package the verified image for deployment
+        if: github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p deployment
+          docker save "devops-container-validation:$GITHUB_SHA" | gzip > deployment/image.tar.gz
+          cp scripts/deploy-local.sh deployment/deploy-local.sh
+
+      - name: Upload the deployment package
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-${{ github.sha }}
+          path: deployment/
+          retention-days: 3
+          compression-level: 0
+          if-no-files-found: error
+
       - name: Log in to Docker Hub
         if: env.DOCKERHUB_CONFIGURED == 'true'
         uses: docker/login-action@v3
@@ -65,3 +90,39 @@ jobs:
         run: |
           echo '### Tests, Docker build, and running-container checks passed' >> "$GITHUB_STEP_SUMMARY"
           echo 'Docker Hub publishing was skipped. Add DOCKERHUB_USERNAME and DOCKERHUB_TOKEN as repository secrets to enable it.' >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-laptop:
+    name: Deploy on the laptop
+    needs: build-test-push
+    if: github.repository == 'anushrut-rumik/devops-container-validation' && github.ref == 'refs/heads/main' && vars.LAPTOP_DEPLOY_ENABLED == 'true'
+    runs-on: [self-hosted, macOS, ARM64, devops-lab-laptop]
+    timeout-minutes: 10
+    concurrency:
+      group: laptop-deployment
+      cancel-in-progress: false
+    steps:
+      - name: Download this run's verified image
+        uses: actions/download-artifact@v4
+        with:
+          name: deployment-${{ github.sha }}
+          path: deployment-${{ github.run_id }}
+
+      - name: Load and deploy the image
+        env:
+          PACKAGE_PATH: deployment-${{ github.run_id }}
+        run: |
+          docker load --input "$PACKAGE_PATH/image.tar.gz"
+          bash "$PACKAGE_PATH/deploy-local.sh" "devops-container-validation:$GITHUB_SHA" "$GITHUB_SHA"
+
+      - name: Show the deployed application
+        run: |
+          curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8080/
+          echo '### Deployed on the demo laptop' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Open http://localhost:8080 on that laptop. The container stays running after this job ends.' >> "$GITHUB_STEP_SUMMARY"
+          echo "Commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove the downloaded package
+        if: always()
+        env:
+          PACKAGE_PATH: deployment-${{ github.run_id }}
+        run: rm -rf -- "$PACKAGE_PATH"

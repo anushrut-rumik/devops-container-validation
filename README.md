@@ -1,143 +1,193 @@
-# Docker Container Validation Before Publishing
+# Test, Build, and Deploy a Docker Application
 
 A DevOps mini project that automatically checks whether a built Docker image actually runs before allowing it to be published
 
-## What does this project do?
+It also includes an automatic deployment job for a demo laptop and tests for deployment, replacement, and failure recovery.
 
-Whenever code is pushed to `main`, GitHub Actions:
+## Current setup: read this first
 
-1. Runs the application tests.
-2. Builds a Docker image.
-3. Starts a container from that exact image.
-4. Sends HTTP requests to the running container.
-5. Checks that the home page and health endpoint return the expected data.
-6. Removes the temporary container.
-7. Publishes the verified image to Docker Hub, if credentials are configured.
+The repository remains public. No laptop runner has been registered, and `LAPTOP_DEPLOY_ENABLED` has not been enabled. Therefore **automatic laptop deployment is currently disabled**. The workflow includes the deployment job, but skips it until a suitable runner is connected and the variable is enabled.
 
-If the application tests, Docker build, or container checks fail, publishing does not run. Failed container checks print the container logs to help diagnose the problem.
+The GitHub-hosted job does run real deployment tests on a temporary GitHub machine: it deploys a container, replaces it, checks recovery from a broken startup, and removes the test containers. Those tests verify the deployment script; they are not a persistent deployment to your laptop.
 
-## The DevOps difference from the original project
+## What the application does
 
-The application remains the original simple Express server. It returns a welcome message at `/` and a health response at `/health`. It has no temperature converter.
+The application is intentionally simple:
 
-| Original pipeline | This pipeline |
-|---|---|
-| Test application code | Test application code |
-| Build Docker image | Build Docker image |
-| Publish image | Start the built container and check its HTTP responses |
-| No running-container check | Publish only after the container check passes |
+- `/` returns a welcome message, version, release label, and deployed commit.
+- `/health` returns `{"status":"healthy"}`.
 
-Why does this matter? Application tests can pass even if the Dockerfile starts the wrong file or uses the wrong port. Building an image can also succeed in those situations. Running the actual container catches these packaging and startup problems before publication.
+`src/release.json` contains the visible release label. Changing that label lets you demonstrate which version is running without adding unrelated application features.
 
-The pipeline publishes the same locally built image that it checked. It does not rebuild a different image for publication.
+The main project is the automated delivery process around this application.
+
+## What Docker does
+
+Docker packages Node.js, the application code, and dependencies into an image. Starting that image creates a container that runs the web application.
+
+The pipeline distinguishes two uses of containers:
+
+1. A temporary test container proves that the built image starts and responds correctly. It is removed after the check.
+2. A deployed container stays running after the deployment script finishes. On the demo laptop it would be available at `http://localhost:8080`.
 
 ## Pipeline
 
 ```text
-Push to main
-     |
-     v
-Run application tests
-     |
-     v
-Build Docker image
-     |
-     v
-Start a container from that image
-     |
-     v
-Check /health and / over HTTP
-     |
-     +-- Failure --> Print logs, remove container, stop
-     |
-     v
-Remove the temporary container
-     |
-     v
-Publish the verified image, if Docker Hub credentials exist
+Push code to main
+        |
+        v
+GitHub-hosted ARM64 machine
+  Run application tests
+  Build the Docker image
+  Start and check a temporary container
+  Test deployment, replacement, and failed-start recovery
+  Save the verified image as a workflow artifact
+        |
+        v
+Optional laptop deployment job (currently disabled)
+  Download the same verified image
+  Load it into the laptop's Docker
+  Replace the project's running container
+  Check the new container and laptop port
+  Leave it running at http://localhost:8080
 ```
 
-The running-container check is commonly called a smoke test: a short check that the packaged application can start and perform its basic function. It does not replace the application's tests or prove production readiness.
+A workflow artifact is a saved file transferred between jobs. Here it contains the Docker image and deployment script. This deployment route does not require Docker Hub credentials and does not rebuild the image on the laptop.
 
-## Main files
+The build uses an ARM64 GitHub machine to match the Apple Silicon laptop. An Intel deployment machine would need a matching image/build architecture and runner labels.
 
-| File | Responsibility |
+## What changed from the original repository?
+
+| Original project | This project |
 |---|---|
-| `src/server.js` | Original simple web application |
-| `test/server.test.js` | Two application endpoint tests |
-| `Dockerfile` | Packages Node.js and the application |
-| `scripts/check-container.sh` | Starts the image, checks responses, prints logs on failure, and cleans up |
-| `.github/workflows/docker.yml` | Runs the steps automatically after a push to main |
+| Test source code | Test source code |
+| Build Docker image | Build Docker image |
+| Publish the image | First start the image and verify HTTP responses |
+| No deployment script | Script that starts a persistent container and replaces the old version |
+| No deployed-version evidence | Response includes release label and commit |
+| No failed-deployment recovery | Restarts the previous container if the replacement fails |
 
-The container check chooses an available local port, waits up to 15 attempts for a response, and validates the JSON data. Each HTTP attempt has a two-second timeout. It requires Bash, Docker, curl, and Node.js; these are available in the configured GitHub runner.
+Docker Hub publication remains optional. It is separate from the artifact-based laptop deployment route.
 
-## Demo 1: Show a successful push
+## How deployment works
 
-1. Open this project's GitHub repository.
-2. Make a small README change locally, such as adding your group members.
-3. Commit and push it:
+`scripts/deploy-local.sh IMAGE COMMIT` performs these steps:
 
-```bash
-git add README.md
-git commit -m "Add project group details"
-git push origin main
-```
+1. Confirms the requested image exists locally.
+2. Checks that an existing `devops-lab-app` container belongs to this project before touching it.
+3. Keeps the previous container temporarily, then stops it to free port 8080.
+4. Starts the new image as `devops-lab-app`, mapped to `127.0.0.1:8080`.
+5. Checks the new container's health response and expected commit, then checks the laptop port.
+6. On success, removes the old container and leaves the new one running.
+7. On failure, removes the failed replacement and restarts the previous container if one existed. The workflow still fails to make the unsuccessful deployment visible.
 
-4. Open **Actions** and select **Docker Build and Container Validation**.
-5. Open the run triggered by your push.
-6. Show **Run tests**, **Build Docker image locally**, and **Start and verify the built container** passing.
-7. Expand the container-check step to show the `PASS` message.
+The container uses `--restart unless-stopped`, so Docker can restart it after Docker itself restarts. It cannot serve requests while the laptop is asleep or Docker is stopped. The switch has a brief interruption; this is not a zero-downtime deployment. The application has no database or persistent user data.
 
-Explain: "The original project built and published an image. Our pipeline also starts that image and verifies the running application before it can be published."
+## Demo A: What you can show on GitHub now
 
-## Demo 2: Show why the extra check matters
+1. Edit `README.md`, then commit and push to `main`.
+2. Open **Actions → Test, Build, and Deploy**.
+3. Show the passing application tests and Docker build.
+4. Expand **Start and verify the built container** to show the HTTP response check.
+5. Expand **Test deployment, update, and failure recovery**. It demonstrates:
+   - a first deployment;
+   - an update to a different commit marker;
+   - a deliberately broken startup;
+   - restoration of the previous container.
+6. Show the `deployment-<commit>` artifact produced by the successful build.
+7. Explain that **Deploy on the laptop** is skipped because no laptop runner is connected.
 
-An optional failure demonstration can use a temporary branch and the manual workflow trigger, so main remains working:
+The deliberate failure inside the integration test is expected: the test passes only if the deploy script rejects it and the previous container works again.
 
-1. Create a temporary branch from main.
-2. Change only the final Dockerfile command from `src/server.js` to `src/missing.js`.
-3. Commit and push the temporary branch.
-4. In GitHub Actions, manually run the workflow on that branch.
-5. Show that application tests pass and the Docker build succeeds, but the running-container check fails because the startup file does not exist.
-6. Show the container logs and the skipped publishing step. Do not merge this deliberately broken branch into main.
+## Demo B: Run a persistent deployment locally by hand
 
-This demonstrates a failure that testing the application source and building an image alone would not catch.
-
-## Run locally
-
-Use Node.js 24, matching the Dockerfile and GitHub workflow.
+This is a manual demonstration of the deployment script, not automatic deployment from GitHub. Start Docker Desktop first.
 
 ```bash
 npm ci
 npm test
-npm start
+docker build -t devops-container-validation:demo-1 .
+bash scripts/deploy-local.sh devops-container-validation:demo-1 demo-1
 ```
 
-Visit `http://localhost:3000/` and `http://localhost:3000/health`. Stop the app with Ctrl+C.
+Open `http://localhost:8080/`. You should see `Demo release 1` and commit `demo-1`.
 
-With Docker running, build and verify the packaged application:
+Now change `src/release.json` to:
+
+```json
+{
+  "label": "Demo release 2"
+}
+```
+
+Build and deploy the second version:
 
 ```bash
-docker build -t devops-container-validation:local .
-bash scripts/check-container.sh devops-container-validation:local
+docker build -t devops-container-validation:demo-2 .
+bash scripts/deploy-local.sh devops-container-validation:demo-2 demo-2
 ```
 
-The script removes its temporary container after either success or failure.
+Refresh the same URL. The release label and commit should change. The application remains running after the commands finish.
 
-## Optional Docker Hub publishing
+To inspect or stop the local application:
 
-Tests, builds, and container validation run without Docker Hub credentials. In that case, the workflow explicitly skips publishing and explains this in its summary. A green run alone does not mean an image was uploaded.
+```bash
+docker ps --filter name=devops-lab-app
+docker logs devops-lab-app
+docker stop devops-lab-app
+```
 
-To enable publishing:
+## Demo C: Automatic deployment after runner setup
 
-1. Create a Docker Hub repository named `devops-container-validation`.
-2. Create a Docker Hub access token with push permission.
-3. In the GitHub repository, open **Settings → Secrets and variables → Actions**.
-4. Add `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` as repository secrets.
-5. Push a change to main or manually start the workflow.
+This path is prepared but not activated. Do not describe it as demonstrated until a laptop deployment has completed and its URL has been checked.
 
-The verified image is published with `latest` and Git commit identifier tags. Starting it on a remote server remains a separate step; this project does not automatically deploy to a remote server.
+A self-hosted runner is GitHub's agent running on a machine you manage. It receives workflow jobs and executes them there. GitHub recommends using self-hosted runners with private repositories because public-repository contributions can expose the machine to untrusted code. See [GitHub's runner setup guidance](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/add-runners).
+
+For an automatic demo, first arrange a suitable private repository or isolated deployment runner. If the repository name changes, update the repository guard in the workflow. Do not connect an everyday laptop to this public repository merely to bypass that concern.
+
+For an approved setup:
+
+1. Register an Apple Silicon macOS runner with the custom label `devops-lab-laptop`.
+2. Keep Docker Desktop and the runner process running. This workflow does not install a startup service.
+3. Ensure the runner can execute Docker and curl.
+4. Set the repository Actions variable `LAPTOP_DEPLOY_ENABLED` to `true`.
+5. Push a change to `main`.
+6. Watch the hosted build job pass, then the laptop deployment job run.
+7. Open `http://localhost:8080/` on the deployment laptop. The commit must match the workflow commit.
+8. Change the release label, commit, and push again. Refresh the same URL after deployment finishes to demonstrate the automatic update.
+
+Only `main` in the named repository can enter the laptop deployment job. Manual runs on other branches only exercise CI. Deployment jobs are serialized so two updates do not replace the container simultaneously. If the runner is offline while deployment is enabled, the job queues until a matching runner is available.
+
+Example commands after changing the release label:
+
+```bash
+git add src/release.json
+git commit -m "Demo: update deployed release label"
+git push origin main
+```
+
+To disable future laptop deployment jobs, set `LAPTOP_DEPLOY_ENABLED` to `false`. This does not stop a container that is already running.
+
+## Optional Docker Hub publication
+
+To upload the verified image to Docker Hub, create a `devops-container-validation` repository there and add `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` as GitHub repository secrets. Without them, publishing is explicitly skipped.
+
+Published image tags are `latest` and the source commit identifier. The laptop deployment path uses the saved workflow artifact instead of Docker Hub.
+
+## Main files
+
+| File | Role |
+|---|---|
+| `.github/workflows/docker.yml` | Hosted checks, artifact upload, optional publication, and guarded laptop deployment |
+| `scripts/check-container.sh` | Checks a temporary container |
+| `scripts/deploy-local.sh` | Starts or replaces the persistent container |
+| `scripts/test-deployment.sh` | Exercises deployment and recovery on a disposable CI machine |
+| `src/release.json` | Visible release label for the demo |
+| `src/server.js` | Simple application and deployed commit response |
+| `Dockerfile` | Packages the application |
+
+Runner files and credentials, if created in a future setup, belong in the ignored `.local/` folder, which is also excluded from Docker builds.
 
 ## Original project
 
-Adapted from [Jain2975/DevopsLabCA](https://github.com/Jain2975/DevopsLabCA). The original application and Git history are retained. The main extension is running-container validation before image publication.
+Adapted from [Jain2975/DevopsLabCA](https://github.com/Jain2975/DevopsLabCA). The original Git history is retained. The extensions concern container validation and deployment.
