@@ -1,4 +1,4 @@
-# Simple Docker CI/CD with GitHub Actions
+# Simple Docker CI/CD with GitHub 
 
 This project demonstrates a small automated workflow for a Node.js application.
 
