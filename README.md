@@ -1,108 +1,111 @@
-# Temperature Conversion API with Automated Docker Publishing
+# Docker Container Validation Before Publishing
 
-A DevOps mini project that converts Celsius to Fahrenheit and automatically tests, packages, and publishes the application using GitHub Actions and Docker Hub.
+A DevOps mini project that automatically checks whether a built Docker image actually runs before allowing it to be published.
 
-## What changed from the original project?
+## What does this project do?
 
-The original application returned a welcome message and a basic health response. This version adds a useful operation: converting a temperature supplied by the caller.
+Whenever code is pushed to `main`, GitHub Actions:
 
-| Area | Original project | This project |
-|---|---|---|
-| Application purpose | Demonstrate a running web server | Convert Celsius to Fahrenheit |
-| Endpoints | `/` and `/health` | `/`, `/health`, and `/convert` |
-| Input handling | No user input needed | Validates the supplied temperature |
-| Tests | Welcome message and health response | Also checks conversions and invalid input |
-| Docker Hub image name | `devops-lab-ca` | `temperature-conversion-api` |
-| Delivery process | Test, build, publish | Same process |
+1. Runs the application tests.
+2. Builds a Docker image.
+3. Starts a container from that exact image.
+4. Sends HTTP requests to the running container.
+5. Checks that the home page and health endpoint return the expected data.
+6. Removes the temporary container.
+7. Publishes the verified image to Docker Hub, if credentials are configured.
 
-The technical foundation stays the same: Node.js, Express, Jest, Supertest, Docker, GitHub Actions, and Docker Hub. No database, frontend framework, or additional service is required.
+If the application tests, Docker build, or container checks fail, publishing does not run. Failed container checks print the container logs to help diagnose the problem.
 
-The workflow publishes an image. It does **not** automatically deploy or update an application on a remote server. Pulling the image and starting a container are separate steps.
+## The DevOps difference from the original project
 
-## How a conversion works
+The application remains the original simple Express server. It returns a welcome message at `/` and a health response at `/health`. It has no temperature converter.
 
-1. A caller requests `/convert?celsius=25`.
-2. Express routes the request to the conversion handler.
-3. The handler checks that `celsius` contains exactly one valid number.
-4. The handler calculates `fahrenheit = celsius × 1.8 + 32`.
-5. The application returns the input and result as JSON.
-
-Example response, with HTTP status `200`:
-
-```json
-{
-  "celsius": 25,
-  "fahrenheit": 77
-}
-```
-
-Negative temperatures, decimal values, and scientific notation such as `1e2` are supported. Surrounding whitespace is ignored. Missing, blank, repeated, nonnumeric, or excessively large values return HTTP `400` with an `error` message. Hexadecimal input such as `0x19` is rejected.
-
-This is a numerical unit converter; it does not enforce physical temperature limits. Results use JavaScript floating-point numbers, so some decimal results may contain small rounding artifacts.
-
-## Endpoints
-
-| Request | Response |
+| Original pipeline | This pipeline |
 |---|---|
-| `GET /` | Application name, version, and example conversion URL |
-| `GET /health` | `{"status":"healthy"}` |
-| `GET /convert?celsius=25` | `{"celsius":25,"fahrenheit":77}` |
-| `GET /convert?celsius=hello` | HTTP `400` and an error message |
+| Test application code | Test application code |
+| Build Docker image | Build Docker image |
+| Publish image | Start the built container and check its HTTP responses |
+| No running-container check | Publish only after the container check passes |
 
-The health endpoint is a basic availability response. It does not inspect external services or provide production monitoring.
+Why does this matter? Application tests can pass even if the Dockerfile starts the wrong file or uses the wrong port. Building an image can also succeed in those situations. Running the actual container catches these packaging and startup problems before publication.
 
-## How the automated pipeline works
+The pipeline publishes the same locally built image that it checked. It does not rebuild a different image for publication.
 
-```text
-Developer pushes code to main
-              |
-              v
-GitHub Actions checks out the code
-              |
-              v
-Set up Node.js 24 and install dependencies
-              |
-              v
-Run automated application tests
-              |
-        Tests pass?
-              |
-              v
-Set up Docker and log in to Docker Hub
-              |
-              v
-Build and publish the application image
-              |
-              v
-A person pulls the image and starts a container
-```
-
-Tests and Docker builds run even when Docker Hub credentials have not been configured. Publishing runs only when both `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` are present. Otherwise, the workflow skips login and publishing and explains this in its run summary. A successful build-only run does not mean the image was uploaded.
-
-A failed test stops the job before publishing. The workflow can also be started manually from the GitHub Actions page. It does not currently run automatically for pull requests.
-
-Each published image receives two tags:
-
-- `latest`: a convenient label updated by publishing runs.
-- The Git commit identifier: associates a build with its source revision.
-
-The tests check Express directly. The workflow does not start the built container and test it before publishing.
-
-## Repository structure
+## Pipeline
 
 ```text
-.github/workflows/docker.yml   Automated test, build, and publishing workflow
-src/server.js                  Express endpoints and conversion logic
-test/server.test.js            Endpoint, conversion, and validation tests
-Dockerfile                     Instructions for packaging the application
-.dockerignore                  Files excluded from Docker's build context
-package.json                   Project metadata, dependencies, and commands
-package-lock.json              Locked dependency versions
+Push to main
+     |
+     v
+Run application tests
+     |
+     v
+Build Docker image
+     |
+     v
+Start a container from that image
+     |
+     v
+Check /health and / over HTTP
+     |
+     +-- Failure --> Print logs, remove container, stop
+     |
+     v
+Remove the temporary container
+     |
+     v
+Publish the verified image, if Docker Hub credentials exist
 ```
+
+The running-container check is commonly called a smoke test: a short check that the packaged application can start and perform its basic function. It does not replace the application's tests or prove production readiness.
+
+## Main files
+
+| File | Responsibility |
+|---|---|
+| `src/server.js` | Original simple web application |
+| `test/server.test.js` | Two application endpoint tests |
+| `Dockerfile` | Packages Node.js and the application |
+| `scripts/check-container.sh` | Starts the image, checks responses, prints logs on failure, and cleans up |
+| `.github/workflows/docker.yml` | Runs the steps automatically after a push to main |
+
+The container check chooses an available local port, waits up to 15 attempts for a response, and validates the JSON data. Each HTTP attempt has a two-second timeout. It requires Bash, Docker, curl, and Node.js; these are available in the configured GitHub runner.
+
+## Demo 1: Show a successful push
+
+1. Open this project's GitHub repository.
+2. Make a small README change locally, such as adding your group members.
+3. Commit and push it:
+
+```bash
+git add README.md
+git commit -m "Add project group details"
+git push origin main
+```
+
+4. Open **Actions** and select **Docker Build and Container Validation**.
+5. Open the run triggered by your push.
+6. Show **Run tests**, **Build Docker image locally**, and **Start and verify the built container** passing.
+7. Expand the container-check step to show the `PASS` message.
+
+Explain: "The original project built and published an image. Our pipeline also starts that image and verifies the running application before it can be published."
+
+## Demo 2: Show why the extra check matters
+
+An optional failure demonstration can use a temporary branch and the manual workflow trigger, so main remains working:
+
+1. Create a temporary branch from main.
+2. Change only the final Dockerfile command from `src/server.js` to `src/missing.js`.
+3. Commit and push the temporary branch.
+4. In GitHub Actions, manually run the workflow on that branch.
+5. Show that application tests pass and the Docker build succeeds, but the running-container check fails because the startup file does not exist.
+6. Show the container logs and the skipped publishing step. Do not merge this deliberately broken branch into main.
+
+This demonstrates a failure that testing the application source and building an image alone would not catch.
 
 ## Run locally
 
-Use Node.js 24, which is the version configured in the workflow and Dockerfile.
+Use Node.js 24, matching the Dockerfile and GitHub workflow.
 
 ```bash
 npm ci
@@ -110,102 +113,31 @@ npm test
 npm start
 ```
 
-The server listens on port `3000` by default. Set the `PORT` environment variable to use a different port.
+Visit `http://localhost:3000/` and `http://localhost:3000/health`. Stop the app with Ctrl+C.
 
-In another terminal, try:
-
-```bash
-curl http://localhost:3000/
-curl http://localhost:3000/health
-curl 'http://localhost:3000/convert?celsius=25'
-curl 'http://localhost:3000/convert?celsius=-40'
-curl -i 'http://localhost:3000/convert?celsius=hello'
-```
-
-The conversion examples return `77` and `-40` Fahrenheit. The invalid example returns HTTP `400`. Stop the server with Ctrl+C.
-
-## Build and run with Docker
-
-A Docker image packages the application, Node.js, and production dependencies. A container is a running instance of that image. Development dependencies used for testing are excluded from the image.
-
-With Docker installed and running:
+With Docker running, build and verify the packaged application:
 
 ```bash
-docker build -t temperature-conversion-api:local .
-docker run --name temperature-api -p 3000:3000 -d temperature-conversion-api:local
-curl 'http://localhost:3000/convert?celsius=25'
+docker build -t devops-container-validation:local .
+bash scripts/check-container.sh devops-container-validation:local
 ```
 
-The port mapping connects port `3000` on your computer to port `3000` inside the container. If the local port is busy, use `-p 3001:3000` and visit port `3001` instead.
+The script removes its temporary container after either success or failure.
 
-To inspect and stop the container:
+## Optional Docker Hub publishing
 
-```bash
-docker logs temperature-api
-docker stop temperature-api
-docker rm temperature-api
-```
+Tests, builds, and container validation run without Docker Hub credentials. In that case, the workflow explicitly skips publishing and explains this in its summary. A green run alone does not mean an image was uploaded.
 
-## Demonstrate a push to your own GitHub repository
+To enable publishing:
 
-The workflow runs automatically when a commit reaches `main`. After the project has been pushed to your own repository:
+1. Create a Docker Hub repository named `devops-container-validation`.
+2. Create a Docker Hub access token with push permission.
+3. In the GitHub repository, open **Settings → Secrets and variables → Actions**.
+4. Add `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` as repository secrets.
+5. Push a change to main or manually start the workflow.
 
-1. Edit the welcome message in `src/server.js` and its expected value in `test/server.test.js`.
-2. Run `npm test` to verify the change.
-3. Commit and push:
-
-```bash
-git add src/server.js test/server.test.js
-git commit -m "Update the temperature API welcome message"
-git push origin main
-```
-
-4. Open your repository's **Actions** tab and select the new **Docker CI/CD** run.
-5. Show the passing tests and Docker image build.
-
-This demonstration works without Docker Hub credentials. To also show image publishing, complete the setup below. The workflow can also be run manually, but a manual run does not demonstrate a push trigger.
-
-## Configure GitHub Actions and Docker Hub
-
-1. Put the project in your GitHub repository with a `main` branch.
-2. Create a Docker Hub repository named `temperature-conversion-api`.
-3. Create a Docker Hub access token with permission to push to that repository.
-4. Add these GitHub repository secrets under **Settings → Secrets and variables → Actions**:
-
-| Secret | Value |
-|---|---|
-| `DOCKERHUB_USERNAME` | Your Docker Hub username |
-| `DOCKERHUB_TOKEN` | Your Docker Hub access token |
-
-5. Push a commit to `main`, or manually run **Docker CI/CD** in the Actions tab.
-6. Inspect the workflow logs to confirm that tests, image building, and publishing succeeded.
-
-The image destination changed from `devops-lab-ca` to `temperature-conversion-api`. Existing Docker Hub setup must allow pushing to this new repository. Keep credentials in GitHub secrets, not source files.
-
-## Run the published image
-
-After a successful publishing run, replace `YOUR-USERNAME` below with your Docker Hub username:
-
-```bash
-docker pull YOUR-USERNAME/temperature-conversion-api:latest
-docker run --name temperature-api -p 3000:3000 -d YOUR-USERNAME/temperature-conversion-api:latest
-curl 'http://localhost:3000/convert?celsius=25'
-```
-
-Remove a previous container with the same name before creating another. To run a particular build, replace `latest` with its Git commit tag. Updating an image does not update an already-running container; pull the intended image and recreate the container.
-
-## Suggested demonstration
-
-1. Explain the conversion formula and show a successful request.
-2. Show that invalid input returns HTTP `400`.
-3. Run `npm test` and explain the conversion and validation checks.
-4. Explain how the Dockerfile packages the application.
-5. Push a change to `main` and show the GitHub Actions run.
-6. Show the published image and its tags on Docker Hub.
-7. Pull and run that image, then demonstrate a conversion from the container.
-
-**Project explanation:** We built a temperature-conversion service. Every push to main automatically tests it, packages it as a Docker image, and publishes the image to Docker Hub. The application adds input validation and real calculation to the original demonstration while retaining the same delivery workflow.
+The verified image is published with `latest` and Git commit identifier tags. Starting it on a remote server remains a separate step; this project does not automatically deploy to a remote server.
 
 ## Original project
 
-Adapted from [Jain2975/DevopsLabCA](https://github.com/Jain2975/DevopsLabCA). This version adds the temperature-conversion API, input validation, expanded tests, and a workflow that can test and build before Docker Hub credentials are configured. The original Git history is retained.
+Adapted from [Jain2975/DevopsLabCA](https://github.com/Jain2975/DevopsLabCA). The original application and Git history are retained. The main extension is running-container validation before image publication.

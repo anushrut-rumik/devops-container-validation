@@ -1,7 +1,7 @@
 {
-  "name": "temperature-conversion-api",
+  "name": "devops-container-validation",
   "version": "1.0.0",
-  "description": "A Celsius-to-Fahrenheit API with automated testing and Docker image publishing.",
+  "description": "A DevOps pipeline that tests, builds, and verifies a running Docker container before publishing.",
   "main": "src/server.js",
   "scripts": {
     "test": "NODE_OPTIONS=--experimental-vm-modules jest --runInBand",
