@@ -1,367 +1,211 @@
-# Automated Docker Container Deployment Using GitHub Actions and Docker Hub
+# Temperature Conversion API with Automated Docker Publishing
 
-> **Subject:** DevOps Lab CA Mini Project  
-> **Project type:** College mini project (group of up to 3 students)  
-> **Core idea:** Automatically test an application, build its Docker image, and publish the image to Docker Hub whenever code is pushed to GitHub.
+A DevOps mini project that converts Celsius to Fahrenheit and automatically tests, packages, and publishes the application using GitHub Actions and Docker Hub.
 
-## 1. Project Overview
+## What changed from the original project?
 
-Hello
+The original application returned a welcome message and a basic health response. This version adds a useful operation: converting a temperature supplied by the caller.
 
-This project demonstrates a simple CI/CD pipeline for a Node.js web application.
+| Area | Original project | This project |
+|---|---|---|
+| Application purpose | Demonstrate a running web server | Convert Celsius to Fahrenheit |
+| Endpoints | `/` and `/health` | `/`, `/health`, and `/convert` |
+| Input handling | No user input needed | Validates the supplied temperature |
+| Tests | Welcome message and health response | Also checks conversions and invalid input |
+| Docker Hub image name | `devops-lab-ca` | `temperature-conversion-api` |
+| Delivery process | Test, build, publish | Same process |
 
-Instead of manually testing the code and building/publishing a Docker image after every change, **GitHub Actions automates the process**. When code is pushed to the `main` branch, the workflow:
+The technical foundation stays the same: Node.js, Express, Jest, Supertest, Docker, GitHub Actions, and Docker Hub. No database, frontend framework, or additional service is required.
 
-1. Checks out the repository.
-2. Sets up Node.js.
-3. Installs project dependencies.
-4. Runs automated tests.
-5. Builds a Docker image.
-6. Logs in to Docker Hub using GitHub repository secrets.
-7. Pushes the image to Docker Hub with two tags: `latest` and the commit SHA.
+The workflow publishes an image. It does **not** automatically deploy or update an application on a remote server. Pulling the image and starting a container are separate steps.
 
-The published image can then be pulled and run as a container. The current workflow **publishes the image**; it does not automatically connect to a remote server to deploy it. Running the image locally is part of the demonstration.
+## How a conversion works
 
-## 2. Why This Project?
+1. A caller requests `/convert?celsius=25`.
+2. Express routes the request to the conversion handler.
+3. The handler checks that `celsius` contains exactly one valid number.
+4. The handler calculates `fahrenheit = celsius × 1.8 + 32`.
+5. The application returns the input and result as JSON.
 
-Manual deployment steps can be repetitive and easy to forget. This project demonstrates how DevOps practices make the process more consistent:
+Example response, with HTTP status `200`:
 
-- **Automation:** GitHub Actions runs the workflow after a push.
-- **Testing:** tests run before the image is published.
-- **Containerization:** Docker packages the app and its runtime environment.
-- **Image registry:** Docker Hub stores the built image so it can be pulled elsewhere.
-- **Traceability:** the commit-SHA tag identifies the source revision used to build an image.
-
-## 3. Technologies Used
-
-| Technology | Purpose |
-|---|---|
-| Node.js | JavaScript runtime |
-| Express.js | Lightweight web server |
-| Jest | Automated testing |
-| Supertest | HTTP endpoint testing |
-| Docker | Packages the application into an image and runs it as a container |
-| Git | Version control |
-| GitHub | Hosts the source-code repository |
-| GitHub Actions | Automates testing, image building, and publishing |
-| Docker Hub | Stores and distributes Docker images |
-
-This project intentionally keeps the scope focused on Docker, GitHub Actions, and Docker Hub. Kubernetes and Jenkins are not required.
-
-## 4. How the Pipeline Works
-
-```text
-Developer edits application
-          |
-          v
-      git push
-          |
-          v
-  GitHub repository (main)
-          |
-          v
- GitHub Actions workflow
-          |
-          v
- Install dependencies
-          |
-          v
-    Run automated tests
-          |
-     tests pass?
-          |
-          v
-    Build Docker image
-          |
-          v
- Authenticate with Docker Hub
-          |
-          v
- Push :latest and :<commit-sha>
-          |
-          v
- Pull and run the image as a container
+```json
+{
+  "celsius": 25,
+  "fahrenheit": 77
+}
 ```
 
-**Important:** if the tests fail, the workflow stops before the Docker image publishing steps. The workflow is triggered by pushes to `main` and can also be started manually using `workflow_dispatch`.
+Negative temperatures, decimal values, and scientific notation such as `1e2` are supported. Surrounding whitespace is ignored. Missing, blank, repeated, nonnumeric, or excessively large values return HTTP `400` with an `error` message. Hexadecimal input such as `0x19` is rejected.
 
-## 5. Application Features
+This is a numerical unit converter; it does not enforce physical temperature limits. Results use JavaScript floating-point numbers, so some decimal results may contain small rounding artifacts.
 
-The Express application currently provides two GET endpoints:
+## Endpoints
 
-| Endpoint | Expected response |
+| Request | Response |
 |---|---|
-| `/` | JSON message: `DevOps Lab CA application is running!` and version `1.0.0` |
-| `/health` | JSON status: `healthy` |
+| `GET /` | Application name, version, and example conversion URL |
+| `GET /health` | `{"status":"healthy"}` |
+| `GET /convert?celsius=25` | `{"celsius":25,"fahrenheit":77}` |
+| `GET /convert?celsius=hello` | HTTP `400` and an error message |
 
-The automated tests in `test/server.test.js` check that both endpoints return HTTP `200` and the expected response values.
+The health endpoint is a basic availability response. It does not inspect external services or provide production monitoring.
 
-## 6. Repository Structure
+## How the automated pipeline works
 
 ```text
-DevopsLabCA-main/
-├── .github/
-│   └── workflows/
-│       └── docker.yml       # CI/CD workflow
-├── src/
-│   └── server.js            # Express application
-├── test/
-│   └── server.test.js       # Automated tests
-├── .dockerignore             # Files excluded from Docker build context
-├── .gitignore                # Files Git should ignore
-├── Dockerfile                # Instructions to build the image
-├── package.json              # Dependencies and npm scripts
-├── package-lock.json         # Locked dependency versions
-└── README.md                 # Project documentation
+Developer pushes code to main
+              |
+              v
+GitHub Actions checks out the code
+              |
+              v
+Set up Node.js 24 and install dependencies
+              |
+              v
+Run automated application tests
+              |
+        Tests pass?
+              |
+              v
+Set up Docker and log in to Docker Hub
+              |
+              v
+Build and publish the application image
+              |
+              v
+A person pulls the image and starts a container
 ```
 
-### What the important files do
+Tests and Docker builds run even when Docker Hub credentials have not been configured. Publishing runs only when both `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` are present. Otherwise, the workflow skips login and publishing and explains this in its run summary. A successful build-only run does not mean the image was uploaded.
 
-- **`src/server.js`** — creates the Express server and defines `/` and `/health`.
-- **`test/server.test.js`** — verifies the endpoints using Jest and Supertest.
-- **`Dockerfile`** — uses `node:24-alpine`, installs production dependencies, copies the app source, and configures port `3000`.
-- **`.github/workflows/docker.yml`** — automates dependency installation, testing, Docker Hub login, image build, and image push.
-- **`.dockerignore`** — keeps files such as `node_modules`, tests, Git metadata, and workflow files out of the Docker build context.
-- **`package.json` / `package-lock.json`** — define the npm scripts and dependencies.
+A failed test stops the job before publishing. The workflow can also be started manually from the GitHub Actions page. It does not currently run automatically for pull requests.
 
-## 7. Run the Application Locally
+Each published image receives two tags:
 
-### Prerequisites
+- `latest`: a convenient label updated by publishing runs.
+- The Git commit identifier: associates a build with its source revision.
 
-Install:
+The tests check Express directly. The workflow does not start the built container and test it before publishing.
 
-- Node.js 24 (or a compatible Node.js version)
-- npm
-- Git
-- Docker Desktop (or Docker Engine)
-- A GitHub account
-- A Docker Hub account
+## Repository structure
 
-### Install dependencies
+```text
+.github/workflows/docker.yml   Automated test, build, and publishing workflow
+src/server.js                  Express endpoints and conversion logic
+test/server.test.js            Endpoint, conversion, and validation tests
+Dockerfile                     Instructions for packaging the application
+.dockerignore                  Files excluded from Docker's build context
+package.json                   Project metadata, dependencies, and commands
+package-lock.json              Locked dependency versions
+```
 
-From the project root:
+## Run locally
+
+Use Node.js 24, which is the version configured in the workflow and Dockerfile.
 
 ```bash
 npm ci
-```
-
-### Run the tests
-
-```bash
 npm test
-```
-
-### Start the application
-
-```bash
 npm start
 ```
 
-The server listens on port `3000` by default. Open these URLs in a browser, or test them using curl:
+The server listens on port `3000` by default. Set the `PORT` environment variable to use a different port.
+
+In another terminal, try:
 
 ```bash
 curl http://localhost:3000/
 curl http://localhost:3000/health
+curl 'http://localhost:3000/convert?celsius=25'
+curl 'http://localhost:3000/convert?celsius=-40'
+curl -i 'http://localhost:3000/convert?celsius=hello'
 ```
 
-Expected JSON from `/`:
+The conversion examples return `77` and `-40` Fahrenheit. The invalid example returns HTTP `400`. Stop the server with Ctrl+C.
 
-```json
-{
-  "message": "DevOps Lab CA application is running!",
-  "version": "1.0.0"
-}
-```
+## Build and run with Docker
 
-Expected JSON from `/health`:
+A Docker image packages the application, Node.js, and production dependencies. A container is a running instance of that image. Development dependencies used for testing are excluded from the image.
 
-```json
-{
-  "status": "healthy"
-}
-```
-
-To stop the local server, press `Ctrl+C` in its terminal.
-
-## 8. Build and Run the Docker Image Locally
-
-Run these commands from the directory containing the `Dockerfile`.
-
-### Build the image
+With Docker installed and running:
 
 ```bash
-docker build -t devops-lab-ca:local .
+docker build -t temperature-conversion-api:local .
+docker run --name temperature-api -p 3000:3000 -d temperature-conversion-api:local
+curl 'http://localhost:3000/convert?celsius=25'
 ```
 
-### Run a container
+The port mapping connects port `3000` on your computer to port `3000` inside the container. If the local port is busy, use `-p 3001:3000` and visit port `3001` instead.
+
+To inspect and stop the container:
 
 ```bash
-docker run --name devops-lab-ca-container -p 3000:3000 -d devops-lab-ca:local
+docker logs temperature-api
+docker stop temperature-api
+docker rm temperature-api
 ```
 
-Visit `http://localhost:3000/` and `http://localhost:3000/health`.
+## Demonstrate a push to your own GitHub repository
 
-### Useful Docker commands
+The workflow runs automatically when a commit reaches `main`. After the project has been pushed to your own repository:
+
+1. Edit the welcome message in `src/server.js` and its expected value in `test/server.test.js`.
+2. Run `npm test` to verify the change.
+3. Commit and push:
 
 ```bash
-docker ps
-docker logs devops-lab-ca-container
-docker stop devops-lab-ca-container
-docker rm devops-lab-ca-container
+git add src/server.js test/server.test.js
+git commit -m "Update the temperature API welcome message"
+git push origin main
 ```
 
-If port `3000` is already occupied, map another host port, for example:
+4. Open your repository's **Actions** tab and select the new **Docker CI/CD** run.
+5. Show the passing tests and Docker image build.
 
-```bash
-docker run --name devops-lab-ca-container -p 3001:3000 -d devops-lab-ca:local
-```
+This demonstration works without Docker Hub credentials. To also show image publishing, complete the setup below. The workflow can also be run manually, but a manual run does not demonstrate a push trigger.
 
-Then visit `http://localhost:3001/`.
+## Configure GitHub Actions and Docker Hub
 
-## 9. GitHub Actions and Docker Hub Setup
+1. Put the project in your GitHub repository with a `main` branch.
+2. Create a Docker Hub repository named `temperature-conversion-api`.
+3. Create a Docker Hub access token with permission to push to that repository.
+4. Add these GitHub repository secrets under **Settings → Secrets and variables → Actions**:
 
-### Step 1: Push the project to GitHub
-
-Create a GitHub repository and push the project files. Ensure the default branch is `main`, because the workflow is configured to run on pushes to `main`.
-
-Typical commands for a newly initialized local repository:
-
-```bash
-git init
-git add .
-git commit -m "Initial project setup"
-git branch -M main
-git remote add origin https://github.com/YOUR-USERNAME/YOUR-REPOSITORY.git
-git push -u origin main
-```
-
-If Git is already initialized or a remote is already configured, do not repeat the relevant setup commands. Replace the example repository URL with your actual GitHub repository URL.
-
-### Step 2: Create a Docker Hub repository
-
-1. Sign in to Docker Hub.
-2. Create a repository named **`devops-lab-ca`**.
-3. Choose whether it should be public or private, according to your group/assessment needs.
-
-The workflow publishes image tags in this format:
-
-```text
-YOUR-DOCKERHUB-USERNAME/devops-lab-ca:latest
-YOUR-DOCKERHUB-USERNAME/devops-lab-ca:<commit-sha>
-```
-
-### Step 3: Create a Docker Hub access token
-
-Create an access token in Docker Hub with the permissions required to push to the repository. Use the token in GitHub Actions rather than placing a Docker Hub password or token in source code.
-
-### Step 4: Add GitHub Actions secrets
-
-In the GitHub repository, open **Settings → Secrets and variables → Actions** and add these repository secrets:
-
-| Secret name | Value |
+| Secret | Value |
 |---|---|
 | `DOCKERHUB_USERNAME` | Your Docker Hub username |
-| `DOCKERHUB_TOKEN` | The Docker Hub access token |
+| `DOCKERHUB_TOKEN` | Your Docker Hub access token |
 
-Secret names must match the names used in `.github/workflows/docker.yml`. Never commit tokens or passwords to Git.
+5. Push a commit to `main`, or manually run **Docker CI/CD** in the Actions tab.
+6. Inspect the workflow logs to confirm that tests, image building, and publishing succeeded.
 
-### Step 5: Trigger and inspect the workflow
+The image destination changed from `devops-lab-ca` to `temperature-conversion-api`. Existing Docker Hub setup must allow pushing to this new repository. Keep credentials in GitHub secrets, not source files.
 
-Push a commit to `main`, or open **Actions** in GitHub and manually run **Docker CI/CD** using `workflow_dispatch`.
+## Run the published image
 
-Inspect the job steps and confirm that:
-
-1. Dependencies install successfully.
-2. Tests pass.
-3. Docker image build succeeds.
-4. Docker Hub login succeeds.
-5. Both image tags are pushed successfully.
-
-If the workflow fails, open the failed run and read the first failing step and its logs.
-
-## 10. Pull and Run the Published Image
-
-After a successful workflow run, replace `YOUR-DOCKERHUB-USERNAME` with the username configured in the GitHub secret:
+After a successful publishing run, replace `YOUR-USERNAME` below with your Docker Hub username:
 
 ```bash
-docker pull YOUR-DOCKERHUB-USERNAME/devops-lab-ca:latest
-docker run --name devops-lab-ca-container -p 3000:3000 -d YOUR-DOCKERHUB-USERNAME/devops-lab-ca:latest
+docker pull YOUR-USERNAME/temperature-conversion-api:latest
+docker run --name temperature-api -p 3000:3000 -d YOUR-USERNAME/temperature-conversion-api:latest
+curl 'http://localhost:3000/convert?celsius=25'
 ```
 
-Visit `http://localhost:3000/` and `http://localhost:3000/health`.
+Remove a previous container with the same name before creating another. To run a particular build, replace `latest` with its Git commit tag. Updating an image does not update an already-running container; pull the intended image and recreate the container.
 
-To run a specific build, use its commit-SHA tag instead of `latest`.
+## Suggested demonstration
 
-## 11. Demonstration Plan
+1. Explain the conversion formula and show a successful request.
+2. Show that invalid input returns HTTP `400`.
+3. Run `npm test` and explain the conversion and validation checks.
+4. Explain how the Dockerfile packages the application.
+5. Push a change to `main` and show the GitHub Actions run.
+6. Show the published image and its tags on Docker Hub.
+7. Pull and run that image, then demonstrate a conversion from the container.
 
-For the lab demonstration, follow this sequence:
+**Project explanation:** We built a temperature-conversion service. Every push to main automatically tests it, packages it as a Docker image, and publishes the image to Docker Hub. The application adds input validation and real calculation to the original demonstration while retaining the same delivery workflow.
 
-1. Explain the project objective and the CI/CD pipeline.
-2. Run the application locally and show `/` and `/health`.
-3. Show the Dockerfile and explain the main instructions.
-4. Show the test file and run `npm test`.
-5. Show `.github/workflows/docker.yml`.
-6. Explain the two GitHub Actions secrets without revealing their values.
-7. Push a change to `main` and show the workflow run in the GitHub Actions tab.
-8. Show that tests pass and the image is built and pushed to Docker Hub.
-9. Pull and run the published image as a container.
-10. Make a small visible change to the application response, update the test if needed, and push again.
-11. Show the new workflow run and updated image tags.
-12. Run the updated image and demonstrate the changed response.
+## Original project
 
-This demonstrates the full path from code change to tested, published container image.
-
-## 12. Suggested Work Split for a Group of 3
-
-Adjust this split to match each member's contribution. Everyone should understand the complete workflow, not only their assigned part.
-
-| Work area | Suggested responsibility | What the member should be ready to explain |
-|---|---|---|
-| Application and tests | Express endpoints, npm scripts, Jest/Supertest tests | Routes, HTTP status codes, test purpose |
-| Docker | Dockerfile, image build, container run, useful Docker commands | Image vs container, `FROM`, `WORKDIR`, `COPY`, `RUN`, `EXPOSE`, `CMD`, port mapping |
-| CI/CD and registry | GitHub Actions workflow, secrets, Docker Hub tags and push | Trigger, job steps, secrets, tags, how the pipeline stops on test failure |
-
-The split is a planning suggestion, not a claim about work already completed by any member.
-
-## 13. Key Concepts for Viva
-
-- **DevOps:** practices that bring development and operations closer together through collaboration, automation, and feedback.
-- **CI (Continuous Integration):** automatically validating changes, for example by installing dependencies and running tests after a push.
-- **CD (Continuous Delivery/Deployment):** automating later delivery steps. In this project, the workflow automatically publishes the image; starting a container is currently a separate step.
-- **Docker image:** a packaged template containing the application and the dependencies needed to run it.
-- **Container:** a running instance of an image.
-- **Dockerfile:** instructions Docker uses to build an image.
-- **Docker Hub:** a registry where Docker images are stored and shared.
-- **GitHub Actions:** GitHub's automation platform that runs workflow jobs in response to events or manual triggers.
-- **GitHub Actions secret:** a protected value used by a workflow, such as a registry token.
-- **Image tag:** a label identifying an image version. `latest` is a conventional tag, not a guarantee that an image is the newest one; the commit-SHA tag helps identify a particular build.
-- **Port mapping (`-p 3000:3000`):** maps port `3000` on the host to port `3000` inside the container.
-- **Why test before pushing?** It prevents the workflow from publishing an image when the automated tests fail.
-- **Why use a commit-SHA tag?** It makes a published build easier to associate with the source commit that triggered it.
-
-## 14. Current Scope and Limitations
-
-The repository currently implements a small Express app, two endpoint tests, a Dockerfile, and a GitHub Actions workflow that tests, builds, and pushes the image.
-
-The current workflow does **not**:
-- deploy automatically to a remote cloud server;
-- use Kubernetes or Jenkins;
-- include a database or frontend framework;
-- perform advanced security scanning or production monitoring.
-
-These are outside the current mini-project scope. Keep the demonstration focused and reliable.
-
-## 15. Troubleshooting Checklist
-
-- **Workflow did not start:** confirm the push was to `main`, or use `workflow_dispatch`.
-- **Docker Hub login failed:** verify `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` are configured correctly and the token can push to the repository.
-- **Image push failed:** confirm the Docker Hub repository exists and the account has permission to push to it.
-- **Tests failed:** run `npm ci` followed by `npm test` locally and inspect the failing assertion.
-- **Port already in use:** map a different host port, such as `-p 3001:3000`.
-- **Container exits:** inspect `docker logs devops-lab-ca-container` and check the Docker run command.
-- **Changes are not visible:** confirm the latest workflow completed successfully, pull the intended image tag again, and recreate the container from that image.
-
----
-
-**Project title:** Automated Docker Container Deployment Using GitHub Actions and Docker Hub  
-**Primary learning outcome:** automate application testing and Docker image publishing through a GitHub Actions CI/CD workflow.
+Adapted from [Jain2975/DevopsLabCA](https://github.com/Jain2975/DevopsLabCA). This version adds the temperature-conversion API, input validation, expanded tests, and a workflow that can test and build before Docker Hub credentials are configured. The original Git history is retained.

@@ -1,8 +1,8 @@
 {
-  "name": "devopslabca",
+  "name": "temperature-conversion-api",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "A Celsius-to-Fahrenheit API with automated testing and Docker image publishing.",
+  "main": "src/server.js",
   "scripts": {
     "test": "NODE_OPTIONS=--experimental-vm-modules jest --runInBand",
     "start": "node src/server.js"
